@@ -45,6 +45,8 @@
 #include <vector>
 
 #include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 struct fat_header {
     uint32_t magic;
@@ -337,6 +339,7 @@ int main(int argc, const char *argv[]) {
         const char *path(file->c_str());
         const char *base = strrchr(path, '/');
         char *temp(NULL), *dir;
+        mode_t mode = 0;
 
         if (base != NULL)
             dir = strndup(path, base++ - path + 1);
@@ -506,6 +509,10 @@ int main(int argc, const char *argv[]) {
         }
 
         if (temp) {
+            struct stat info;
+            _syscall(stat(path, &info));
+            _syscall(chown(temp, info.st_uid, info.st_gid));
+            _syscall(chmod(temp, info.st_mode));
             _syscall(unlink(path));
             _syscall(rename(temp, path));
             free(temp);
