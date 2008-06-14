@@ -217,6 +217,10 @@ class Framework {
         );
     }
 
+    struct mach_header *operator ->() const {
+        return mach_header_;
+    }
+
     void *GetBase() {
         return base_;
     }
@@ -241,6 +245,7 @@ class Framework {
 #define CSMAGIC_CODEDIRECTORY 0xfade0c02
 #define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
 #define CSSLOT_CODEDIRECTORY 0
+#define CSSLOT_REQUIREMENTS 2
 
 struct BlobIndex {
     uint32_t type;
@@ -346,18 +351,41 @@ int main(int argc, const char *argv[]) {
             if (allocate == NULL)
                 allocate = "codesign_allocate";
 
-            size_t size; {
+            size_t size = _not(size_t);
+            const char *arch; {
                 Framework framework(path);
-                size = framework.GetSize();
+                _foreach (load_command, framework.GetLoadCommands()) {
+                    uint32_t cmd(framework.Swap((*load_command)->cmd));
+                    if (cmd == LC_CODE_SIGNATURE) {
+                        struct linkedit_data_command *signature = reinterpret_cast<struct linkedit_data_command *>(*load_command);
+                        size = framework.Swap(signature->dataoff);
+                        _assert(size < framework.GetSize());
+                        break;
+                    }
+                }
+
+                if (size == _not(size_t))
+                    size = framework.GetSize();
+
+                switch (framework->cputype) {
+                    case 12: switch (framework->cpusubtype) {
+                        case 0: arch = "arm"; break;
+                        case 6: arch = "armv6"; break;
+                        default: arch = NULL; break;
+                    } break;
+
+                    default: arch = NULL; break;
+                }
             }
+
+            _assert(arch != NULL);
 
             pid_t pid = fork();
             _syscall(pid);
             if (pid == 0) {
                 char *ssize;
-                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + (size + 0x1000 - 1) / 0x1000 * 0x14 + 15) / 16 * 16);
-                printf("%s\n", ssize);
-                execlp(allocate, allocate, "-i", path, "-a", "arm", ssize, "-o", temp, NULL);
+                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + (size + 0x1000 - 1) / 0x1000 * 0x14 + 0xc + 15) / 16 * 16);
+                execlp(allocate, allocate, "-i", path, "-a", arch, ssize, "-o", temp, NULL);
                 _assert(false);
             }
 
@@ -423,7 +451,7 @@ int main(int argc, const char *argv[]) {
             struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
             super->magic = Swap(CSMAGIC_EMBEDDED_SIGNATURE);
 
-            uint32_t count = 1;
+            uint32_t count = 2;
             uint32_t offset = sizeof(struct SuperBlob) + count * sizeof(struct BlobIndex);
 
             super->index[0].type = Swap(CSSLOT_CODEDIRECTORY);
@@ -464,10 +492,16 @@ int main(int argc, const char *argv[]) {
             offset += sizeof(*hashes) * (special + pages);
             directory->length = Swap(offset - begin);
 
+            super->index[1].type = Swap(CSSLOT_REQUIREMENTS);
+            super->index[1].offset = Swap(offset);
+
+            memcpy(blob + offset, "\xfa\xde\x0c\x01\x00\x00\x00\x0c\x00\x00\x00\x00", 0xc);
+            offset += 0xc;
+
             super->count = Swap(count);
             super->length = Swap(offset);
 
-            _assert(offset < size);
+            _assert(offset <= size);
             memset(blob + offset, 0, size - offset);
         }
 
