@@ -77,9 +77,10 @@ struct mach_header {
 #define MH_MAGIC 0xfeedface
 #define MH_CIGAM 0xcefaedfe
 
-#define MH_EXECUTE 0x2
-#define MH_DYLIB   0x6
-#define MH_BUNDLE  0x8
+#define MH_EXECUTE    0x2
+#define MH_DYLIB      0x6
+#define MH_BUNDLE     0x8
+#define MH_DYLIB_STUB 0x9
 
 struct load_command {
     uint32_t cmd;
