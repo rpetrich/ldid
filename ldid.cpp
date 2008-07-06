@@ -36,6 +36,7 @@
 */
 
 #include "minimal/stdlib.h"
+#include "minimal/string.h"
 #include "minimal/mapping.h"
 
 #include "sha1.h"
@@ -359,7 +360,7 @@ int main(int argc, const char *argv[]) {
         mode_t mode = 0;
 
         if (base != NULL)
-            dir = strndup(path, base++ - path + 1);
+            dir = strndup_(path, base++ - path + 1);
         else {
             dir = strdup("");
             base = path;
