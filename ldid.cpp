@@ -51,7 +51,7 @@
 struct fat_header {
     uint32_t magic;
     uint32_t nfat_arch;
-};
+} _packed;
 
 #define FAT_MAGIC 0xcafebabe
 #define FAT_CIGAM 0xbebafeca
@@ -62,7 +62,7 @@ struct fat_arch {
     uint32_t offset;
     uint32_t size;
     uint32_t align;
-};
+} _packed;
 
 struct mach_header {
     uint32_t magic;
@@ -72,7 +72,7 @@ struct mach_header {
     uint32_t ncmds;
     uint32_t sizeofcmds;
     uint32_t flags;
-};
+} _packed;
 
 #define MH_MAGIC 0xfeedface
 #define MH_CIGAM 0xcefaedfe
@@ -85,7 +85,7 @@ struct mach_header {
 struct load_command {
     uint32_t cmd;
     uint32_t cmdsize;
-};
+} _packed;
 
 #define LC_REQ_DYLD  0x80000000
 
@@ -100,26 +100,26 @@ struct dylib {
     uint32_t timestamp;
     uint32_t current_version;
     uint32_t compatibility_version;
-};
+} _packed;
 
 struct dylib_command {
     uint32_t cmd;
     uint32_t cmdsize;
     struct dylib dylib;
-};
+} _packed;
 
 struct uuid_command {
     uint32_t cmd;
     uint32_t cmdsize;
     uint8_t uuid[16];
-};
+} _packed;
 
 struct linkedit_data_command {
     uint32_t cmd;
     uint32_t cmdsize;
     uint32_t dataoff;
     uint32_t datasize;
-};
+} _packed;
 
 uint16_t Swap_(uint16_t value) {
     return
@@ -245,26 +245,32 @@ class Framework {
     }
 };
 
-#define CSMAGIC_CODEDIRECTORY 0xfade0c02
+#define CSMAGIC_CODEDIRECTORY      0xfade0c02
 #define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
+#define CSMAGIC_ENTITLEMENTS       0xfade7171
+
 #define CSSLOT_CODEDIRECTORY 0
-#define CSSLOT_REQUIREMENTS 2
+#define CSSLOT_REQUIREMENTS  2
+#define CSSLOT_ENTITLEMENTS  5
 
 struct BlobIndex {
     uint32_t type;
     uint32_t offset;
-};
+} _packed;
+
+struct Blob {
+    uint32_t magic;
+    uint32_t length;
+} _packed;
 
 struct SuperBlob {
-    uint32_t magic;
-    uint32_t length;
+    struct Blob blob;
     uint32_t count;
     struct BlobIndex index[];
-};
+} _packed;
 
 struct CodeDirectory {
-    uint32_t magic;
-    uint32_t length;
+    struct Blob blob;
     uint32_t version;
     uint32_t flags;
     uint32_t hashOffset;
@@ -277,7 +283,7 @@ struct CodeDirectory {
     uint8_t spare1;
     uint8_t pageSize;
     uint32_t spare2;
-};
+} _packed;
 
 extern "C" uint32_t hash(uint8_t *k, uint32_t length, uint32_t initval);
 
@@ -302,6 +308,9 @@ int main(int argc, const char *argv[]) {
     bool timeh(false);
     uint32_t timev(0);
 
+    const void *xmld(NULL);
+    size_t xmls(0);
+
     std::vector<std::string> files;
 
     _assert(argc != 0);
@@ -313,7 +322,14 @@ int main(int argc, const char *argv[]) {
             case 't': flag_t = true; break;
             case 'u': flag_u = true; break;
             case 'p': flag_p = true; break;
-            case 'S': flag_S = true; break;
+
+            case 'S':
+                flag_S = true;
+                if (argv[argi][2] != '\0') {
+                    const char *xml = argv[argi] + 2;
+                    xmld = map(xml, 0, _not(size_t), &xmls, true);
+                }
+            break;
 
             case 'T': {
                 flag_T = true;
@@ -388,7 +404,8 @@ int main(int argc, const char *argv[]) {
             _syscall(pid);
             if (pid == 0) {
                 char *ssize;
-                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + (size + 0x1000 - 1) / 0x1000 * 0x14 + 0xc + 15) / 16 * 16);
+                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + (size + 0x1000 - 1) / 0x1000 * 0x14 + 0xc + (xmld == NULL ? 0 : 0x10 + xmls) + 15) / 16 * 16);
+                //printf("codesign_allocate -i %s -a %s %s -o %s\n", path, arch, ssize, temp);
                 execlp(allocate, allocate, "-i", path, "-a", arch, ssize, "-o", temp, NULL);
                 _assert(false);
             }
@@ -453,9 +470,9 @@ int main(int argc, const char *argv[]) {
             uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
             uint8_t *blob = top + data;
             struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
-            super->magic = Swap(CSMAGIC_EMBEDDED_SIGNATURE);
+            super->blob.magic = Swap(CSMAGIC_EMBEDDED_SIGNATURE);
 
-            uint32_t count = 2;
+            uint32_t count = xmld == NULL ? 2 : 3;
             uint32_t offset = sizeof(struct SuperBlob) + count * sizeof(struct BlobIndex);
 
             super->index[0].type = Swap(CSSLOT_CODEDIRECTORY);
@@ -465,7 +482,7 @@ int main(int argc, const char *argv[]) {
             struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
             offset += sizeof(struct CodeDirectory);
 
-            directory->magic = Swap(CSMAGIC_CODEDIRECTORY);
+            directory->blob.magic = Swap(CSMAGIC_CODEDIRECTORY);
             directory->version = Swap(0x00020001);
             directory->flags = Swap(0);
             directory->codeLimit = Swap(data);
@@ -494,7 +511,7 @@ int main(int argc, const char *argv[]) {
 
             directory->hashOffset = Swap(offset - begin);
             offset += sizeof(*hashes) * (special + pages);
-            directory->length = Swap(offset - begin);
+            directory->blob.length = Swap(offset - begin);
 
             super->index[1].type = Swap(CSSLOT_REQUIREMENTS);
             super->index[1].offset = Swap(offset);
@@ -502,10 +519,29 @@ int main(int argc, const char *argv[]) {
             memcpy(blob + offset, "\xfa\xde\x0c\x01\x00\x00\x00\x0c\x00\x00\x00\x00", 0xc);
             offset += 0xc;
 
-            super->count = Swap(count);
-            super->length = Swap(offset);
+            if (xmld != NULL) {
+                super->index[2].type = Swap(CSSLOT_ENTITLEMENTS);
+                super->index[2].offset = Swap(offset);
 
-            _assert(offset <= size);
+                uint32_t begin = offset;
+                struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
+                offset += sizeof(struct Blob);
+
+                memcpy(blob + offset, xmld, xmls);
+                offset += xmls;
+
+                entitlements->magic = Swap(CSMAGIC_ENTITLEMENTS);
+                entitlements->length = Swap(offset - begin);
+            }
+
+            super->count = Swap(count);
+            super->blob.length = Swap(offset);
+
+            if (offset > size) {
+                fprintf(stderr, "offset (%zu) > size (%zu)\n", offset, size);
+                _assert(false);
+            } //else fprintf(stderr, "offset (%zu) <= size (%zu)\n", offset, size);
+
             memset(blob + offset, 0, size - offset);
         }
 
