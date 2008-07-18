@@ -304,7 +304,9 @@ int main(int argc, const char *argv[]) {
     bool flag_u(false);
 
     bool flag_T(false);
+
     bool flag_S(false);
+    bool flag_s(false);
 
     bool timeh(false);
     uint32_t timev(0);
@@ -324,7 +326,13 @@ int main(int argc, const char *argv[]) {
             case 'u': flag_u = true; break;
             case 'p': flag_p = true; break;
 
+            case 's':
+                _assert(!flag_S);
+                flag_s = true;
+            break;
+
             case 'S':
+                _assert(!flag_s);
                 flag_S = true;
                 if (argv[argi][2] != '\0') {
                     const char *xml = argv[argi] + 2;
@@ -405,8 +413,8 @@ int main(int argc, const char *argv[]) {
             _syscall(pid);
             if (pid == 0) {
                 char *ssize;
-                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + (size + 0x1000 - 1) / 0x1000 * 0x14 + 0xc + (xmld == NULL ? 0 : 0x10 + xmls) + 15) / 16 * 16);
-                //printf("codesign_allocate -i %s -a %s %s -o %s\n", path, arch, ssize, temp);
+                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + ((xmld == NULL ? CSSLOT_REQUIREMENTS : CSSLOT_ENTITLEMENTS) + (size + 0x1000 - 1) / 0x1000) * 0x14 + 0xc + (xmld == NULL ? 0 : 0x10 + xmls) + 15) / 16 * 16);
+                //printf("%s -i %s -a %s %s -o %s\n", allocate, path, arch, ssize, temp);
                 execlp(allocate, allocate, "-i", path, "-a", arch, ssize, "-o", temp, NULL);
                 _assert(false);
             }
@@ -462,6 +470,32 @@ int main(int argc, const char *argv[]) {
             }
         }
 
+        if (flag_s) {
+            _assert(signature != NULL);
+
+            uint32_t data = framework.Swap(signature->dataoff);
+            uint32_t size = framework.Swap(signature->datasize);
+
+            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
+            uint8_t *blob = top + data;
+            struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
+
+            for (size_t index(0); index != Swap(super->count); ++index)
+                if (Swap(super->index[index].type) == CSSLOT_CODEDIRECTORY) {
+                    uint32_t begin = Swap(super->index[index].offset);
+                    struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
+
+                    uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + begin + Swap(directory->hashOffset));
+                    uint32_t pages = Swap(directory->nCodeSlots);
+
+                    if (pages != 1)
+                        for (size_t i = 0; i != pages - 1; ++i)
+                            sha1(hashes[i], top + 0x1000 * i, 0x1000);
+                    if (pages != 0)
+                        sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), data % 0x1000);
+                }
+        }
+
         if (flag_S) {
             _assert(signature != NULL);
 
@@ -497,21 +531,26 @@ int main(int argc, const char *argv[]) {
             strcpy(reinterpret_cast<char *>(blob + offset), base);
             offset += strlen(base) + 1;
 
+            uint32_t special = xmld == NULL ? CSSLOT_REQUIREMENTS : CSSLOT_ENTITLEMENTS;
+            directory->nSpecialSlots = Swap(special);
+
             uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + offset);
-            uint32_t special = 0;
+            memset(hashes, 0, sizeof(*hashes) * special);
+
+            offset += sizeof(*hashes) * special;
+            hashes += special;
 
             uint32_t pages = (data + 0x1000 - 1) / 0x1000;
-            directory->nSpecialSlots = Swap(special);
             directory->nCodeSlots = Swap(pages);
 
             if (pages != 1)
                 for (size_t i = 0; i != pages - 1; ++i)
-                    sha1(hashes[special + i], top + 0x1000 * i, 0x1000);
+                    sha1(hashes[i], top + 0x1000 * i, 0x1000);
             if (pages != 0)
-                sha1(hashes[special + pages - 1], top + 0x1000 * (pages - 1), data % 0x1000);
+                sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), data % 0x1000);
 
             directory->hashOffset = Swap(offset - begin);
-            offset += sizeof(*hashes) * (special + pages);
+            offset += sizeof(*hashes) * pages;
             directory->blob.length = Swap(offset - begin);
 
             super->index[1].type = Swap(CSSLOT_REQUIREMENTS);
@@ -533,6 +572,15 @@ int main(int argc, const char *argv[]) {
 
                 entitlements->magic = Swap(CSMAGIC_ENTITLEMENTS);
                 entitlements->length = Swap(offset - begin);
+            }
+
+            for (size_t index(0); index != count; ++index) {
+                uint32_t type = Swap(super->index[index].type);
+                if (type != 0 && type <= special) {
+                    uint32_t offset = Swap(super->index[index].offset);
+                    struct Blob *local = (struct Blob *) (blob + offset);
+                    sha1((uint8_t *) (hashes - type), (uint8_t *) local, Swap(local->length));
+                }
             }
 
             super->count = Swap(count);
