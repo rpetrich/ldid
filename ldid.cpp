@@ -316,7 +316,13 @@ int main(int argc, const char *argv[]) {
 
     std::vector<std::string> files;
 
-    _assert(argc != 0);
+    if (argc == 1) {
+        fprintf(stderr, "usage: %s -S[entitlements.xml] <binary>\n", argv[0]);
+        fprintf(stderr, "   %s -S cat\n", argv[0]);
+        fprintf(stderr, "   %s -Stfp.xml gdb\n", argv[0]);
+        exit(0);
+    }
+
     for (int argi(1); argi != argc; ++argi)
         if (argv[argi][0] != '-')
             files.push_back(argv[argi]);
