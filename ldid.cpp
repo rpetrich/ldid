@@ -498,7 +498,7 @@ int main(int argc, const char *argv[]) {
                         for (size_t i = 0; i != pages - 1; ++i)
                             sha1(hashes[i], top + 0x1000 * i, 0x1000);
                     if (pages != 0)
-                        sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), data % 0x1000);
+                        sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
                 }
         }
 
@@ -553,7 +553,7 @@ int main(int argc, const char *argv[]) {
                 for (size_t i = 0; i != pages - 1; ++i)
                     sha1(hashes[i], top + 0x1000 * i, 0x1000);
             if (pages != 0)
-                sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), data % 0x1000);
+                sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
 
             directory->hashOffset = Swap(offset - begin);
             offset += sizeof(*hashes) * pages;
