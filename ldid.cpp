@@ -302,6 +302,7 @@ int main(int argc, const char *argv[]) {
     bool flag_t(false);
     bool flag_p(false);
     bool flag_u(false);
+    bool flag_e(false);
 
     bool flag_T(false);
 
@@ -318,6 +319,7 @@ int main(int argc, const char *argv[]) {
 
     if (argc == 1) {
         fprintf(stderr, "usage: %s -S[entitlements.xml] <binary>\n", argv[0]);
+        fprintf(stderr, "   %s -e MobileSafari\n", argv[0]);
         fprintf(stderr, "   %s -S cat\n", argv[0]);
         fprintf(stderr, "   %s -Stfp.xml gdb\n", argv[0]);
         exit(0);
@@ -331,6 +333,7 @@ int main(int argc, const char *argv[]) {
             case 't': flag_t = true; break;
             case 'u': flag_u = true; break;
             case 'p': flag_p = true; break;
+            case 'e': flag_e = true; break;
 
             case 's':
                 _assert(!flag_S);
@@ -371,7 +374,6 @@ int main(int argc, const char *argv[]) {
         const char *path(file->c_str());
         const char *base = strrchr(path, '/');
         char *temp(NULL), *dir;
-        mode_t mode = 0;
 
         if (base != NULL)
             dir = strndup_(path, base++ - path + 1);
@@ -474,6 +476,24 @@ int main(int argc, const char *argv[]) {
                     dylib_command->dylib.timestamp = framework.Swap(timed);
                 }
             }
+        }
+
+        if (flag_e) {
+            _assert(signature != NULL);
+
+            uint32_t data = framework.Swap(signature->dataoff);
+            uint32_t size = framework.Swap(signature->datasize);
+
+            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
+            uint8_t *blob = top + data;
+            struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
+
+            for (size_t index(0); index != Swap(super->count); ++index)
+                if (Swap(super->index[index].type) == CSSLOT_ENTITLEMENTS) {
+                    uint32_t begin = Swap(super->index[index].offset);
+                    struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
+                    fwrite(entitlements + 1, 1, Swap(entitlements->length) - sizeof(struct Blob), stdout);
+                }
         }
 
         if (flag_s) {
@@ -593,7 +613,7 @@ int main(int argc, const char *argv[]) {
             super->blob.length = Swap(offset);
 
             if (offset > size) {
-                fprintf(stderr, "offset (%zu) > size (%zu)\n", offset, size);
+                fprintf(stderr, "offset (%u) > size (%u)\n", offset, size);
                 _assert(false);
             } //else fprintf(stderr, "offset (%zu) <= size (%zu)\n", offset, size);
 
