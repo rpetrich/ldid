@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string.h>
 #include "minimal/mapping.h"
 
 struct ar_hdr {
