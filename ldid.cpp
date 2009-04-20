@@ -90,6 +90,7 @@ struct load_command {
 
 #define LC_REQ_DYLD  0x80000000
 
+#define	LC_SEGMENT         0x01
 #define LC_LOAD_DYLIB      0x0c
 #define LC_ID_DYLIB        0x0d
 #define LC_UUID            0x1b
@@ -114,6 +115,34 @@ struct uuid_command {
     uint32_t cmdsize;
     uint8_t uuid[16];
 } _packed;
+
+struct segment_command {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    char segname[16];
+    uint32_t vmaddr;
+    uint32_t vmsize;
+    uint32_t fileoff;
+    uint32_t filesize;
+    uint32_t maxprot;
+    uint32_t initprot;
+    uint32_t nsects;
+    uint32_t flags;
+};
+
+struct section {
+    char sectname[16];
+    char segname[16];
+    uint32_t addr;
+    uint32_t size;
+    uint32_t offset;
+    uint32_t align;
+    uint32_t reloff;
+    uint32_t nreloc;
+    uint32_t flags;
+    uint32_t reserved1;
+    uint32_t reserved2;
+};
 
 struct linkedit_data_command {
     uint32_t cmd;
@@ -159,6 +188,9 @@ int16_t Swap(int16_t value) {
 int32_t Swap(int32_t value) {
     return Swap(static_cast<uint32_t>(value));
 }
+
+template <typename Target_>
+class Pointer;
 
 class Framework {
   private:
@@ -244,6 +276,104 @@ class Framework {
 
         return load_commands;
     }
+
+    std::vector<segment_command *> GetSegments(const char *segment_name) {
+        std::vector<struct segment_command *> segment_commands;
+
+        _foreach (load_command, GetLoadCommands())
+            if (Swap((*load_command)->cmd) == LC_SEGMENT) {
+                segment_command *segment_command = reinterpret_cast<struct segment_command *>(*load_command);
+                if (strncmp(segment_command->segname, segment_name, 16) == 0)
+                    segment_commands.push_back(segment_command);
+            }
+
+        return segment_commands;
+    }
+
+    std::vector<section *> GetSections(const char *segment_name, const char *section_name) {
+        std::vector<section *> sections;
+
+        _foreach (segment, GetSegments(segment_name)) {
+            section *section = (struct section *) (*segment + 1);
+
+            uint32_t sect;
+            for (sect = 0; sect != Swap((*segment)->nsects); ++sect) {
+                if (strncmp(section->sectname, section_name, 16) == 0)
+                    sections.push_back(section);
+                ++section;
+            }
+        }
+
+        return sections;
+    }
+
+    template <typename Target_>
+    Pointer<Target_> GetPointer(uint32_t address, const char *segment_name = NULL) {
+        load_command *load_command = (struct load_command *) (mach_header_ + 1);
+        uint32_t cmd;
+
+        for (cmd = 0; cmd != Swap(mach_header_->ncmds); ++cmd) {
+            if (Swap(load_command->cmd) == LC_SEGMENT) {
+                segment_command *segment_command = (struct segment_command *) load_command;
+                if (segment_name != NULL && strncmp(segment_command->segname, segment_name, 16) != 0)
+                    goto next_command;
+
+                section *sections = (struct section *) (segment_command + 1);
+
+                uint32_t sect;
+                for (sect = 0; sect != Swap(segment_command->nsects); ++sect) {
+                    section *section = &sections[sect];
+                    //printf("%s %u %p %p %u\n", segment_command->segname, sect, address, section->addr, section->size);
+                    if (address >= Swap(section->addr) && address < Swap(section->addr) + Swap(section->size)) {
+                        //printf("0x%.8x %s\n", address, segment_command->segname);
+                        return Pointer<Target_>(this, reinterpret_cast<Target_ *>(address - Swap(section->addr) + Swap(section->offset) + (char *) mach_header_));
+                    }
+                }
+            }
+
+          next_command:
+            load_command = (struct load_command *) ((char *) load_command + Swap(load_command->cmdsize));
+        }
+
+        return Pointer<Target_>(this);
+    }
+
+    template <typename Target_>
+    Pointer<Target_> GetOffset(uint32_t offset) {
+        return Pointer<Target_>(this, reinterpret_cast<Target_ *>(offset + (uint8_t *) mach_header_));
+    }
+};
+
+template <typename Target_>
+class Pointer {
+  private:
+    const Framework *framework_;
+    const Target_ *pointer_;
+
+  public:
+    Pointer(const Framework *framework = NULL, const Target_ *pointer = NULL) :
+        framework_(framework),
+        pointer_(pointer)
+    {
+    }
+
+    operator const Target_ *() const {
+        return pointer_;
+    }
+
+    const Target_ *operator ->() const {
+        return pointer_;
+    }
+
+    Pointer<Target_> &operator ++() {
+        ++pointer_;
+        return *this;
+    }
+
+    template <typename Value_>
+    Value_ Swap(Value_ value) {
+        return framework_->Swap(value);
+    }
 };
 
 #define CSMAGIC_CODEDIRECTORY      0xfade0c02
@@ -315,6 +445,9 @@ int main(int argc, const char *argv[]) {
     const void *xmld(NULL);
     size_t xmls(0);
 
+    uintptr_t noffset(_not(uintptr_t));
+    uintptr_t woffset(_not(uintptr_t));
+
     std::vector<std::string> files;
 
     if (argc == 1) {
@@ -358,6 +491,18 @@ int main(int argc, const char *argv[]) {
                     timev = strtoul(argv[argi] + 2, &arge, 0);
                     _assert(arge == argv[argi] + strlen(argv[argi]));
                 }
+            } break;
+
+            case 'n': {
+                char *arge;
+                noffset = strtoul(argv[argi] + 2, &arge, 0);
+                _assert(arge == argv[argi] + strlen(argv[argi]));
+            } break;
+
+            case 'w': {
+                char *arge;
+                woffset = strtoul(argv[argi] + 2, &arge, 0);
+                _assert(arge == argv[argi] + strlen(argv[argi]));
             } break;
 
             default:
@@ -438,6 +583,17 @@ int main(int argc, const char *argv[]) {
 
         if (flag_p)
             printf("path%zu='%s'\n", filei, file->c_str());
+
+        if (woffset != _not(uintptr_t)) {
+            Pointer<uint32_t> wvalue(framework.GetPointer<uint32_t>(woffset));
+            if (wvalue == NULL)
+                printf("(null) %p\n", woffset);
+            else
+                printf("0x%.08x\n", *wvalue);
+        }
+
+        if (noffset != _not(uintptr_t))
+            printf("%s\n", &*framework.GetPointer<char>(noffset));
 
         _foreach (load_command, framework.GetLoadCommands()) {
             uint32_t cmd(framework.Swap((*load_command)->cmd));
