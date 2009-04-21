@@ -78,6 +78,8 @@ struct mach_header {
 #define MH_MAGIC 0xfeedface
 #define MH_CIGAM 0xcefaedfe
 
+#define MH_DYLDLINK   0x4
+
 #define MH_EXECUTE    0x2
 #define MH_DYLIB      0x6
 #define MH_BUNDLE     0x8
@@ -536,6 +538,8 @@ int main(int argc, const char *argv[]) {
             size_t size = _not(size_t);
             const char *arch; {
                 Framework framework(path);
+                framework->flags |= MH_DYLDLINK;
+
                 _foreach (load_command, framework.GetLoadCommands()) {
                     uint32_t cmd(framework.Swap((*load_command)->cmd));
                     if (cmd == LC_CODE_SIGNATURE) {
