@@ -780,6 +780,22 @@ int main(int argc, const char *argv[]) {
             memset(blob + offset, 0, size - offset);
         }
 
+        if (flag_S) {
+            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
+            size_t size = framework.GetSize();
+
+            char *copy;
+            asprintf(&copy, "%s.%s.cp", dir, base);
+            FILE *file = fopen(copy, "w+");
+            size_t writ = fwrite(top, 1, size, file);
+            _assert(writ == size);
+            fclose(file);
+
+            _syscall(unlink(temp));
+            free(temp);
+            temp = copy;
+        }
+
         if (temp) {
             struct stat info;
             _syscall(stat(path, &info));
