@@ -90,14 +90,14 @@ struct load_command {
     uint32_t cmdsize;
 } _packed;
 
-#define LC_REQ_DYLD  0x80000000
+#define LC_REQ_DYLD  uint32_t(0x80000000)
 
-#define	LC_SEGMENT         0x01
-#define LC_LOAD_DYLIB      0x0c
-#define LC_ID_DYLIB        0x0d
-#define LC_UUID            0x1b
-#define LC_CODE_SIGNATURE  0x1d
-#define LC_REEXPORT_DYLIB (0x1f | LC_REQ_DYLD)
+#define	LC_SEGMENT         uint32_t(0x01)
+#define LC_LOAD_DYLIB      uint32_t(0x0c)
+#define LC_ID_DYLIB        uint32_t(0x0d)
+#define LC_UUID            uint32_t(0x1b)
+#define LC_CODE_SIGNATURE  uint32_t(0x1d)
+#define LC_REEXPORT_DYLIB  uint32_t(0x1f | LC_REQ_DYLD)
 
 struct dylib {
     uint32_t name;
@@ -378,13 +378,13 @@ class Pointer {
     }
 };
 
-#define CSMAGIC_CODEDIRECTORY      0xfade0c02
-#define CSMAGIC_EMBEDDED_SIGNATURE 0xfade0cc0
-#define CSMAGIC_ENTITLEMENTS       0xfade7171
+#define CSMAGIC_CODEDIRECTORY      uint32_t(0xfade0c02)
+#define CSMAGIC_EMBEDDED_SIGNATURE uint32_t(0xfade0cc0)
+#define CSMAGIC_ENTITLEMENTS       uint32_t(0xfade7171)
 
-#define CSSLOT_CODEDIRECTORY 0
-#define CSSLOT_REQUIREMENTS  2
-#define CSSLOT_ENTITLEMENTS  5
+#define CSSLOT_CODEDIRECTORY uint32_t(0)
+#define CSSLOT_REQUIREMENTS  uint32_t(2)
+#define CSSLOT_ENTITLEMENTS  uint32_t(5)
 
 struct BlobIndex {
     uint32_t type;
@@ -704,14 +704,14 @@ int main(int argc, const char *argv[]) {
             offset += sizeof(struct CodeDirectory);
 
             directory->blob.magic = Swap(CSMAGIC_CODEDIRECTORY);
-            directory->version = Swap(0x00020001);
-            directory->flags = Swap(0);
+            directory->version = Swap(uint32_t(0x00020001));
+            directory->flags = Swap(uint32_t(0));
             directory->codeLimit = Swap(data);
             directory->hashSize = 0x14;
             directory->hashType = 0x01;
             directory->spare1 = 0x00;
             directory->pageSize = 0x0c;
-            directory->spare2 = Swap(0);
+            directory->spare2 = Swap(uint32_t(0));
 
             directory->identOffset = Swap(offset - begin);
             strcpy(reinterpret_cast<char *>(blob + offset), base);
