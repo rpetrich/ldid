@@ -68,7 +68,11 @@ struct fat_arch {
 struct mach_header {
     uint32_t magic;
     uint32_t cputype;
-    uint32_t cpusubtype;
+
+    // XXX: byte swapped?
+    uint16_t cpusubtype;
+    uint16_t caps;
+
     uint32_t filetype;
     uint32_t ncmds;
     uint32_t sizeofcmds;
@@ -77,6 +81,9 @@ struct mach_header {
 
 #define MH_MAGIC 0xfeedface
 #define MH_CIGAM 0xcefaedfe
+
+#define MH_MAGIC_64 0xfeedfacf
+#define MH_CIGAM_64 0xcffaedfe
 
 #define MH_DYLDLINK   0x4
 
@@ -198,8 +205,12 @@ class Framework {
   private:
     void *base_;
     size_t size_;
-    mach_header *mach_header_;
+
+    struct mach_header *mach_header_;
+    struct load_command *load_command_;
+
     bool swapped_;
+    bool bits64_;
 
   public:
     uint16_t Swap(uint16_t value) const {
@@ -244,9 +255,27 @@ class Framework {
         }
 
       found:
-        if (Swap(mach_header_->magic) == MH_CIGAM)
-            swapped_ = !swapped_;
-        else _assert(Swap(mach_header_->magic) == MH_MAGIC);
+        switch (Swap(mach_header_->magic)) {
+            case MH_CIGAM:
+                swapped_ = !swapped_;
+            case MH_MAGIC:
+                bits64_ = false;
+            break;
+
+            case MH_CIGAM_64:
+                swapped_ = !swapped_;
+            case MH_MAGIC_64:
+                bits64_ = true;
+            break;
+
+            default:
+                _assert(false);
+        }
+
+        void *post = mach_header_ + 1;
+        if (bits64_)
+            post = (uint32_t *) post + 1;
+        load_command_ = (struct load_command *) post;
 
         _assert(
             Swap(mach_header_->filetype) == MH_EXECUTE ||
@@ -263,14 +292,14 @@ class Framework {
         return base_;
     }
 
-    size_t GetSize() {
+    size_t GetSize() const {
         return size_;
     }
 
     std::vector<struct load_command *> GetLoadCommands() {
         std::vector<struct load_command *> load_commands;
 
-        struct load_command *load_command = reinterpret_cast<struct load_command *>(mach_header_ + 1);
+        struct load_command *load_command = load_command_;
         for (uint32_t cmd = 0; cmd != Swap(mach_header_->ncmds); ++cmd) {
             load_commands.push_back(load_command);
             load_command = (struct load_command *) ((uint8_t *) load_command + Swap(load_command->cmdsize));
@@ -554,9 +583,20 @@ int main(int argc, const char *argv[]) {
                     size = framework.GetSize();
 
                 switch (framework->cputype) {
+                    case 7: switch (framework->cpusubtype) {
+                        case 3: arch = "i386"; break;
+                        default: arch = NULL; break;
+                    } break;
+
                     case 12: switch (framework->cpusubtype) {
                         case 0: arch = "arm"; break;
                         case 6: arch = "armv6"; break;
+                        case 9: arch = "armv7"; break;
+                        default: arch = NULL; break;
+                    } break;
+
+                    case 16777223: switch (framework->cpusubtype) {
+                        case 3: arch = "x86_64"; break;
                         default: arch = NULL; break;
                     } break;
 
