@@ -591,7 +591,7 @@ int main(int argc, const char *argv[]) {
         if (woffset != _not(uintptr_t)) {
             Pointer<uint32_t> wvalue(framework.GetPointer<uint32_t>(woffset));
             if (wvalue == NULL)
-                printf("(null) %p\n", woffset);
+                printf("(null) %p\n", reinterpret_cast<void *>(woffset));
             else
                 printf("0x%.08x\n", *wvalue);
         }
