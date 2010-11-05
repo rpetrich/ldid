@@ -68,11 +68,7 @@ struct fat_arch {
 struct mach_header {
     uint32_t magic;
     uint32_t cputype;
-
-    // XXX: byte swapped?
-    uint16_t cpusubtype;
-    uint16_t caps;
-
+    uint32_t cpusubtype;
     uint32_t filetype;
     uint32_t ncmds;
     uint32_t sizeofcmds;
@@ -294,6 +290,14 @@ class Framework {
 
     size_t GetSize() const {
         return size_;
+    }
+
+    uint32_t GetCPUType() const {
+        return Swap(mach_header_->cputype);
+    }
+
+    uint16_t GetCPUSubtype() const {
+        return Swap(mach_header_->cpusubtype) & 0xff;
     }
 
     std::vector<struct load_command *> GetLoadCommands() {
@@ -582,21 +586,31 @@ int main(int argc, const char *argv[]) {
                 if (size == _not(size_t))
                     size = framework.GetSize();
 
-                switch (framework->cputype) {
-                    case 7: switch (framework->cpusubtype) {
+                switch (framework.GetCPUType()) {
+                    case 7: switch (framework.GetCPUSubtype()) {
                         case 3: arch = "i386"; break;
                         default: arch = NULL; break;
                     } break;
 
-                    case 12: switch (framework->cpusubtype) {
+                    case 12: switch (framework.GetCPUSubtype()) {
                         case 0: arch = "arm"; break;
                         case 6: arch = "armv6"; break;
                         case 9: arch = "armv7"; break;
                         default: arch = NULL; break;
                     } break;
 
-                    case 16777223: switch (framework->cpusubtype) {
+                    case 18: switch (framework.GetCPUSubtype()) {
+                        case 10: arch = "ppc7400"; break;
+                        default: arch = NULL; break;
+                    } break;
+
+                    case 16777223: switch (framework.GetCPUSubtype()) {
                         case 3: arch = "x86_64"; break;
+                        default: arch = NULL; break;
+                    } break;
+
+                    case 16777234: switch (framework.GetCPUSubtype()) {
+                        case 0: arch = "ppc64"; break;
                         default: arch = NULL; break;
                     } break;
 
