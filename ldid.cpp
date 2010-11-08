@@ -178,12 +178,14 @@ int32_t Swap_(int32_t value) {
     return Swap_(static_cast<uint32_t>(value));
 }
 
+bool little_(true);
+
 uint16_t Swap(uint16_t value) {
-    return true ? Swap_(value) : value;
+    return little_ ? Swap_(value) : value;
 }
 
 uint32_t Swap(uint32_t value) {
-    return true ? Swap_(value) : value;
+    return little_ ? Swap_(value) : value;
 }
 
 int16_t Swap(int16_t value) {
@@ -463,6 +465,13 @@ void sha1(uint8_t *hash, uint8_t *data, size_t size) {
 }
 
 int main(int argc, const char *argv[]) {
+    union {
+        uint16_t word;
+        uint8_t byte[2];
+    } endian = {1};
+
+    little_ = endian.byte[0];
+
     bool flag_R(false);
     bool flag_t(false);
     bool flag_p(false);
