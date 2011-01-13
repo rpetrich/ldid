@@ -580,7 +580,7 @@ int main(int argc, const char *argv[]) {
             size_t size = _not(size_t);
             const char *arch; {
                 Framework framework(path);
-                framework->flags |= MH_DYLDLINK;
+                framework->flags = framework.Swap(framework.Swap(framework->flags) | MH_DYLDLINK);
 
                 _foreach (load_command, framework.GetLoadCommands()) {
                     uint32_t cmd(framework.Swap((*load_command)->cmd));
