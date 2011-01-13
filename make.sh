@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e -x
+
 flags=()
 
 sdk=/Developer/SDKs/MacOSX10.4u.sdk
