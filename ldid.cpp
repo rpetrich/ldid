@@ -1,5 +1,5 @@
-/* JocStrap - Java/Objective-C Bootstrap
- * Copyright (C) 2007  Jay Freeman (saurik)
+/* ldid - (Mach-O) Link-Loader Identity Editor
+ * Copyright (C) 2007-2010  Jay Freeman (saurik)
 */
 
 /*
