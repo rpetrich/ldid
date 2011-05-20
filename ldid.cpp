@@ -199,18 +199,22 @@ int32_t Swap(int32_t value) {
 template <typename Target_>
 class Pointer;
 
-class Framework {
+class Data {
   private:
     void *base_;
     size_t size_;
 
-    struct mach_header *mach_header_;
-    struct load_command *load_command_;
-
+  protected:
     bool swapped_;
-    bool bits64_;
 
   public:
+    Data(void *base, size_t size) :
+        base_(base),
+        size_(size),
+        swapped_(false)
+    {
+    }
+
     uint16_t Swap(uint16_t value) const {
         return swapped_ ? Swap_(value) : value;
     }
@@ -227,32 +231,30 @@ class Framework {
         return Swap(static_cast<uint32_t>(value));
     }
 
-    Framework(const char *framework_path) :
-        swapped_(false)
+    void *GetBase() const {
+        return base_;
+    }
+
+    size_t GetSize() const {
+        return size_;
+    }
+};
+
+class MachHeader :
+    public Data
+{
+  private:
+    bool bits64_;
+
+    struct mach_header *mach_header_;
+    struct load_command *load_command_;
+
+  public:
+    MachHeader(void *base, size_t size) :
+        Data(base, size)
     {
-        base_ = map(framework_path, 0, _not(size_t), &size_, false);
-        fat_header *fat_header = reinterpret_cast<struct fat_header *>(base_);
+        mach_header_ = (mach_header *) base;
 
-        if (Swap(fat_header->magic) == FAT_CIGAM) {
-            swapped_ = !swapped_;
-            goto fat;
-        } else if (Swap(fat_header->magic) != FAT_MAGIC)
-            mach_header_ = (mach_header *) base_;
-        else fat: {
-            size_t fat_narch = Swap(fat_header->nfat_arch);
-            fat_arch *fat_arch = reinterpret_cast<struct fat_arch *>(fat_header + 1);
-            size_t arch;
-            for (arch = 0; arch != fat_narch; ++arch) {
-                uint32_t arch_offset = Swap(fat_arch->offset);
-                mach_header_ = (mach_header *) ((uint8_t *) base_ + arch_offset);
-                goto found;
-                ++fat_arch;
-            }
-
-            _assert(false);
-        }
-
-      found:
         switch (Swap(mach_header_->magic)) {
             case MH_CIGAM:
                 swapped_ = !swapped_;
@@ -286,14 +288,6 @@ class Framework {
         return mach_header_;
     }
 
-    void *GetBase() {
-        return base_;
-    }
-
-    size_t GetSize() const {
-        return size_;
-    }
-
     uint32_t GetCPUType() const {
         return Swap(mach_header_->cputype);
     }
@@ -302,7 +296,7 @@ class Framework {
         return Swap(mach_header_->cpusubtype) & 0xff;
     }
 
-    std::vector<struct load_command *> GetLoadCommands() {
+    std::vector<struct load_command *> GetLoadCommands() const {
         std::vector<struct load_command *> load_commands;
 
         struct load_command *load_command = load_command_;
@@ -318,8 +312,8 @@ class Framework {
         std::vector<struct segment_command *> segment_commands;
 
         _foreach (load_command, GetLoadCommands())
-            if (Swap((*load_command)->cmd) == LC_SEGMENT) {
-                segment_command *segment_command = reinterpret_cast<struct segment_command *>(*load_command);
+            if (Swap(load_command->cmd) == LC_SEGMENT) {
+                segment_command *segment_command = reinterpret_cast<struct segment_command *>(load_command);
                 if (strncmp(segment_command->segname, segment_name, 16) == 0)
                     segment_commands.push_back(segment_command);
             }
@@ -331,10 +325,10 @@ class Framework {
         std::vector<section *> sections;
 
         _foreach (segment, GetSegments(segment_name)) {
-            section *section = (struct section *) (*segment + 1);
+            section *section = (struct section *) (segment + 1);
 
             uint32_t sect;
-            for (sect = 0; sect != Swap((*segment)->nsects); ++sect) {
+            for (sect = 0; sect != Swap(segment->nsects); ++sect) {
                 if (strncmp(section->sectname, section_name, 16) == 0)
                     sections.push_back(section);
                 ++section;
@@ -345,7 +339,7 @@ class Framework {
     }
 
     template <typename Target_>
-    Pointer<Target_> GetPointer(uint32_t address, const char *segment_name = NULL) {
+    Pointer<Target_> GetPointer(uint32_t address, const char *segment_name = NULL) const {
         load_command *load_command = (struct load_command *) (mach_header_ + 1);
         uint32_t cmd;
 
@@ -381,14 +375,57 @@ class Framework {
     }
 };
 
+class FatHeader :
+    public Data
+{
+  private:
+    fat_header *fat_header_;
+    std::vector<MachHeader> mach_headers_;
+
+  public:
+    FatHeader(void *base, size_t size) :
+        Data(base, size)
+    {
+        fat_header_ = reinterpret_cast<struct fat_header *>(base);
+
+        if (Swap(fat_header_->magic) == FAT_CIGAM) {
+            swapped_ = !swapped_;
+            goto fat;
+        } else if (Swap(fat_header_->magic) != FAT_MAGIC) {
+            fat_header_ = NULL;
+            mach_headers_.push_back(MachHeader(base, size));
+        } else fat: {
+            size_t fat_narch = Swap(fat_header_->nfat_arch);
+            fat_arch *fat_arch = reinterpret_cast<struct fat_arch *>(fat_header_ + 1);
+            size_t arch;
+            for (arch = 0; arch != fat_narch; ++arch) {
+                uint32_t arch_offset = Swap(fat_arch->offset);
+                uint32_t arch_size = Swap(fat_arch->size);
+                mach_headers_.push_back(MachHeader((uint8_t *) base + arch_offset, size));
+                ++fat_arch;
+            }
+        }
+    }
+
+    std::vector<MachHeader> &GetMachHeaders() {
+        return mach_headers_;
+    }
+};
+
+FatHeader Map(const char *path) {
+    size_t size;
+    void *base(map(path, 0, _not(size_t), &size, false));
+    return FatHeader(base, size);
+}
+
 template <typename Target_>
 class Pointer {
   private:
-    const Framework *framework_;
+    const MachHeader *framework_;
     const Target_ *pointer_;
 
   public:
-    Pointer(const Framework *framework = NULL, const Target_ *pointer = NULL) :
+    Pointer(const MachHeader *framework = NULL, const Target_ *pointer = NULL) :
         framework_(framework),
         pointer_(pointer)
     {
@@ -455,14 +492,25 @@ struct CodeDirectory {
 
 extern "C" uint32_t hash(uint8_t *k, uint32_t length, uint32_t initval);
 
-#define CODESIGN_ALLOCATE "arm-apple-darwin9-codesign_allocate"
-
 void sha1(uint8_t *hash, uint8_t *data, size_t size) {
     SHA1Context context;
     SHA1Reset(&context);
     SHA1Input(&context, data, size);
     SHA1Result(&context, hash);
 }
+
+struct CodesignAllocation {
+    uint32_t type_;
+    uint16_t subtype_;
+    size_t size_;
+
+    CodesignAllocation(uint32_t type, uint16_t subtype, size_t size) :
+        type_(type),
+        subtype_(subtype),
+        size_(size)
+    {
+    }
+};
 
 int main(int argc, const char *argv[]) {
     union {
@@ -560,7 +608,7 @@ int main(int argc, const char *argv[]) {
 
     size_t filei(0), filee(0);
     _foreach (file, files) try {
-        const char *path(file->c_str());
+        const char *path(file.c_str());
         const char *base = strrchr(path, '/');
         char *temp(NULL), *dir;
 
@@ -577,65 +625,95 @@ int main(int argc, const char *argv[]) {
             if (allocate == NULL)
                 allocate = "codesign_allocate";
 
-            size_t size = _not(size_t);
-            const char *arch; {
-                Framework framework(path);
-                framework->flags = framework.Swap(framework.Swap(framework->flags) | MH_DYLDLINK);
+            std::vector<CodesignAllocation> allocations; {
+                FatHeader fat_header(Map(path));
+                _foreach (mach_header, fat_header.GetMachHeaders()) {
+                    mach_header->flags = mach_header.Swap(mach_header.Swap(mach_header->flags) | MH_DYLDLINK);
 
-                _foreach (load_command, framework.GetLoadCommands()) {
-                    uint32_t cmd(framework.Swap((*load_command)->cmd));
-                    if (cmd == LC_CODE_SIGNATURE) {
-                        struct linkedit_data_command *signature = reinterpret_cast<struct linkedit_data_command *>(*load_command);
-                        size = framework.Swap(signature->dataoff);
-                        _assert(size < framework.GetSize());
-                        break;
+                    size_t size(_not(size_t)); {
+                        _foreach (load_command, mach_header.GetLoadCommands()) {
+                            uint32_t cmd(mach_header.Swap(load_command->cmd));
+                            if (cmd == LC_CODE_SIGNATURE) {
+                                struct linkedit_data_command *signature = reinterpret_cast<struct linkedit_data_command *>(load_command);
+                                size = mach_header.Swap(signature->dataoff);
+                                _assert(size < mach_header.GetSize());
+                                break;
+                            }
+                        }
+
+                        if (size == _not(size_t))
+                            size = mach_header.GetSize();
                     }
-                }
 
-                if (size == _not(size_t))
-                    size = framework.GetSize();
-
-                switch (framework.GetCPUType()) {
-                    case 7: switch (framework.GetCPUSubtype()) {
-                        case 3: arch = "i386"; break;
-                        default: arch = NULL; break;
-                    } break;
-
-                    case 12: switch (framework.GetCPUSubtype()) {
-                        case 0: arch = "arm"; break;
-                        case 6: arch = "armv6"; break;
-                        case 9: arch = "armv7"; break;
-                        default: arch = NULL; break;
-                    } break;
-
-                    case 18: switch (framework.GetCPUSubtype()) {
-                        case 10: arch = "ppc7400"; break;
-                        default: arch = NULL; break;
-                    } break;
-
-                    case 16777223: switch (framework.GetCPUSubtype()) {
-                        case 3: arch = "x86_64"; break;
-                        default: arch = NULL; break;
-                    } break;
-
-                    case 16777234: switch (framework.GetCPUSubtype()) {
-                        case 0: arch = "ppc64"; break;
-                        default: arch = NULL; break;
-                    } break;
-
-                    default: arch = NULL; break;
+                    allocations.push_back(CodesignAllocation(mach_header.GetCPUType(), mach_header.GetCPUSubtype(), size));
                 }
             }
-
-            _assert(arch != NULL);
 
             pid_t pid = fork();
             _syscall(pid);
             if (pid == 0) {
-                char *ssize;
-                asprintf(&ssize, "%u", (sizeof(struct SuperBlob) + 2 * sizeof(struct BlobIndex) + sizeof(struct CodeDirectory) + strlen(base) + 1 + ((xmld == NULL ? CSSLOT_REQUIREMENTS : CSSLOT_ENTITLEMENTS) + (size + 0x1000 - 1) / 0x1000) * 0x14 + 0xc + (xmld == NULL ? 0 : 0x10 + xmls) + 15) / 16 * 16);
-                //printf("%s -i %s -a %s %s -o %s\n", allocate, path, arch, ssize, temp);
-                execlp(allocate, allocate, "-i", path, "-a", arch, ssize, "-o", temp, NULL);
+                // XXX: this leaks memory, but it doesn't really matter
+                std::vector<const char *> args;
+                char *arg;
+
+                args.push_back(allocate);
+
+                args.push_back("-i");
+                args.push_back(path);
+
+                _foreach (allocation, allocations) {
+                    args.push_back("-A");
+
+                    asprintf(&arg, "%u", allocation.type_);
+                    args.push_back(arg);
+
+                    asprintf(&arg, "%u", allocation.subtype_);
+                    args.push_back(arg);
+
+                    size_t alloc(0);
+                    alloc += sizeof(struct SuperBlob);
+                    uint32_t special(0);
+
+                    special = std::max(special, CSSLOT_CODEDIRECTORY);
+                    alloc += sizeof(struct BlobIndex);
+                    alloc += sizeof(struct CodeDirectory);
+                    alloc += strlen(base) + 1;
+
+                    special = std::max(special, CSSLOT_REQUIREMENTS);
+                    alloc += sizeof(struct BlobIndex);
+                    alloc += 0xc;
+
+                    if (xmld != NULL) {
+                        special = std::max(special, CSSLOT_ENTITLEMENTS);
+                        alloc += sizeof(struct BlobIndex);
+                        alloc += sizeof(struct Blob);
+                        alloc += xmls;
+                    }
+
+                    size_t normal((allocation.size_ + 0x1000 - 1) / 0x1000);
+                    alloc += (special + normal) * 0x14;
+
+                    alloc += 15;
+                    alloc /= 16;
+                    alloc *= 16;
+
+                    asprintf(&arg, "%u", alloc);
+                    args.push_back(arg);
+                }
+
+                args.push_back("-o");
+                args.push_back(temp);
+
+                args.push_back(NULL);
+
+                if (false) {
+                    printf("run:");
+                    _foreach (arg, args)
+                        printf(" %s", arg);
+                    printf("\n");
+                }
+
+                execvp(allocate, (char **) &args[0]);
                 _assert(false);
             }
 
@@ -645,207 +723,209 @@ int main(int argc, const char *argv[]) {
             _assert(WEXITSTATUS(status) == 0);
         }
 
-        Framework framework(temp == NULL ? path : temp);
+        if (flag_p)
+            printf("path%zu='%s'\n", filei, file.c_str());
+
+        FatHeader fat_header(Map(temp == NULL ? path : temp));
         struct linkedit_data_command *signature(NULL);
 
-        if (flag_p)
-            printf("path%zu='%s'\n", filei, file->c_str());
+        _foreach (mach_header, fat_header.GetMachHeaders()) {
+            if (woffset != _not(uintptr_t)) {
+                Pointer<uint32_t> wvalue(mach_header.GetPointer<uint32_t>(woffset));
+                if (wvalue == NULL)
+                    printf("(null) %p\n", reinterpret_cast<void *>(woffset));
+                else
+                    printf("0x%.08x\n", *wvalue);
+            }
 
-        if (woffset != _not(uintptr_t)) {
-            Pointer<uint32_t> wvalue(framework.GetPointer<uint32_t>(woffset));
-            if (wvalue == NULL)
-                printf("(null) %p\n", reinterpret_cast<void *>(woffset));
-            else
-                printf("0x%.08x\n", *wvalue);
-        }
+            if (noffset != _not(uintptr_t))
+                printf("%s\n", &*mach_header.GetPointer<char>(noffset));
 
-        if (noffset != _not(uintptr_t))
-            printf("%s\n", &*framework.GetPointer<char>(noffset));
+            _foreach (load_command, mach_header.GetLoadCommands()) {
+                uint32_t cmd(mach_header.Swap(load_command->cmd));
 
-        _foreach (load_command, framework.GetLoadCommands()) {
-            uint32_t cmd(framework.Swap((*load_command)->cmd));
+                if (flag_R && cmd == LC_REEXPORT_DYLIB)
+                    load_command->cmd = mach_header.Swap(LC_LOAD_DYLIB);
+                else if (cmd == LC_CODE_SIGNATURE)
+                    signature = reinterpret_cast<struct linkedit_data_command *>(load_command);
+                else if (cmd == LC_UUID) {
+                    volatile struct uuid_command *uuid_command(reinterpret_cast<struct uuid_command *>(load_command));
 
-            if (flag_R && cmd == LC_REEXPORT_DYLIB)
-                (*load_command)->cmd = framework.Swap(LC_LOAD_DYLIB);
-            else if (cmd == LC_CODE_SIGNATURE)
-                signature = reinterpret_cast<struct linkedit_data_command *>(*load_command);
-            else if (cmd == LC_UUID) {
-                volatile struct uuid_command *uuid_command(reinterpret_cast<struct uuid_command *>(*load_command));
-
-                if (flag_u) {
-                    printf("uuid%zu=%.2x%.2x%.2x%.2x-%.2x%.2x-%.2x%.2x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x\n", filei,
-                        uuid_command->uuid[ 0], uuid_command->uuid[ 1], uuid_command->uuid[ 2], uuid_command->uuid[ 3],
-                        uuid_command->uuid[ 4], uuid_command->uuid[ 5], uuid_command->uuid[ 6], uuid_command->uuid[ 7],
-                        uuid_command->uuid[ 8], uuid_command->uuid[ 9], uuid_command->uuid[10], uuid_command->uuid[11],
-                        uuid_command->uuid[12], uuid_command->uuid[13], uuid_command->uuid[14], uuid_command->uuid[15]
-                    );
-                }
-            } else if (cmd == LC_ID_DYLIB) {
-                volatile struct dylib_command *dylib_command(reinterpret_cast<struct dylib_command *>(*load_command));
-
-                if (flag_t)
-                    printf("time%zu=0x%.8x\n", filei, framework.Swap(dylib_command->dylib.timestamp));
-
-                if (flag_T) {
-                    uint32_t timed;
-
-                    if (!timeh)
-                        timed = timev;
-                    else {
-                        dylib_command->dylib.timestamp = 0;
-                        timed = hash(reinterpret_cast<uint8_t *>(framework.GetBase()), framework.GetSize(), timev);
+                    if (flag_u) {
+                        printf("uuid%zu=%.2x%.2x%.2x%.2x-%.2x%.2x-%.2x%.2x-%.2x%.2x-%.2x%.2x%.2x%.2x%.2x%.2x\n", filei,
+                            uuid_command->uuid[ 0], uuid_command->uuid[ 1], uuid_command->uuid[ 2], uuid_command->uuid[ 3],
+                            uuid_command->uuid[ 4], uuid_command->uuid[ 5], uuid_command->uuid[ 6], uuid_command->uuid[ 7],
+                            uuid_command->uuid[ 8], uuid_command->uuid[ 9], uuid_command->uuid[10], uuid_command->uuid[11],
+                            uuid_command->uuid[12], uuid_command->uuid[13], uuid_command->uuid[14], uuid_command->uuid[15]
+                        );
                     }
+                } else if (cmd == LC_ID_DYLIB) {
+                    volatile struct dylib_command *dylib_command(reinterpret_cast<struct dylib_command *>(load_command));
 
-                    dylib_command->dylib.timestamp = framework.Swap(timed);
+                    if (flag_t)
+                        printf("time%zu=0x%.8x\n", filei, mach_header.Swap(dylib_command->dylib.timestamp));
+
+                    if (flag_T) {
+                        uint32_t timed;
+
+                        if (!timeh)
+                            timed = timev;
+                        else {
+                            dylib_command->dylib.timestamp = 0;
+                            timed = hash(reinterpret_cast<uint8_t *>(mach_header.GetBase()), mach_header.GetSize(), timev);
+                        }
+
+                        dylib_command->dylib.timestamp = mach_header.Swap(timed);
+                    }
                 }
             }
-        }
 
-        if (flag_e) {
-            _assert(signature != NULL);
+            if (flag_e) {
+                _assert(signature != NULL);
 
-            uint32_t data = framework.Swap(signature->dataoff);
-            uint32_t size = framework.Swap(signature->datasize);
+                uint32_t data = mach_header.Swap(signature->dataoff);
+                uint32_t size = mach_header.Swap(signature->datasize);
 
-            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
-            uint8_t *blob = top + data;
-            struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
+                uint8_t *top = reinterpret_cast<uint8_t *>(mach_header.GetBase());
+                uint8_t *blob = top + data;
+                struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
 
-            for (size_t index(0); index != Swap(super->count); ++index)
-                if (Swap(super->index[index].type) == CSSLOT_ENTITLEMENTS) {
-                    uint32_t begin = Swap(super->index[index].offset);
-                    struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
-                    fwrite(entitlements + 1, 1, Swap(entitlements->length) - sizeof(struct Blob), stdout);
-                }
-        }
+                for (size_t index(0); index != Swap(super->count); ++index)
+                    if (Swap(super->index[index].type) == CSSLOT_ENTITLEMENTS) {
+                        uint32_t begin = Swap(super->index[index].offset);
+                        struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
+                        fwrite(entitlements + 1, 1, Swap(entitlements->length) - sizeof(struct Blob), stdout);
+                    }
+            }
 
-        if (flag_s) {
-            _assert(signature != NULL);
+            if (flag_s) {
+                _assert(signature != NULL);
 
-            uint32_t data = framework.Swap(signature->dataoff);
-            uint32_t size = framework.Swap(signature->datasize);
+                uint32_t data = mach_header.Swap(signature->dataoff);
+                uint32_t size = mach_header.Swap(signature->datasize);
 
-            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
-            uint8_t *blob = top + data;
-            struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
+                uint8_t *top = reinterpret_cast<uint8_t *>(mach_header.GetBase());
+                uint8_t *blob = top + data;
+                struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
 
-            for (size_t index(0); index != Swap(super->count); ++index)
-                if (Swap(super->index[index].type) == CSSLOT_CODEDIRECTORY) {
-                    uint32_t begin = Swap(super->index[index].offset);
-                    struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
+                for (size_t index(0); index != Swap(super->count); ++index)
+                    if (Swap(super->index[index].type) == CSSLOT_CODEDIRECTORY) {
+                        uint32_t begin = Swap(super->index[index].offset);
+                        struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
 
-                    uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + begin + Swap(directory->hashOffset));
-                    uint32_t pages = Swap(directory->nCodeSlots);
+                        uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + begin + Swap(directory->hashOffset));
+                        uint32_t pages = Swap(directory->nCodeSlots);
 
-                    if (pages != 1)
-                        for (size_t i = 0; i != pages - 1; ++i)
-                            sha1(hashes[i], top + 0x1000 * i, 0x1000);
-                    if (pages != 0)
-                        sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
-                }
-        }
+                        if (pages != 1)
+                            for (size_t i = 0; i != pages - 1; ++i)
+                                sha1(hashes[i], top + 0x1000 * i, 0x1000);
+                        if (pages != 0)
+                            sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
+                    }
+            }
 
-        if (flag_S) {
-            _assert(signature != NULL);
+            if (flag_S) {
+                _assert(signature != NULL);
 
-            uint32_t data = framework.Swap(signature->dataoff);
-            uint32_t size = framework.Swap(signature->datasize);
+                uint32_t data = mach_header.Swap(signature->dataoff);
+                uint32_t size = mach_header.Swap(signature->datasize);
 
-            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
-            uint8_t *blob = top + data;
-            struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
-            super->blob.magic = Swap(CSMAGIC_EMBEDDED_SIGNATURE);
+                uint8_t *top = reinterpret_cast<uint8_t *>(mach_header.GetBase());
+                uint8_t *blob = top + data;
+                struct SuperBlob *super = reinterpret_cast<struct SuperBlob *>(blob);
+                super->blob.magic = Swap(CSMAGIC_EMBEDDED_SIGNATURE);
 
-            uint32_t count = xmld == NULL ? 2 : 3;
-            uint32_t offset = sizeof(struct SuperBlob) + count * sizeof(struct BlobIndex);
+                uint32_t count = xmld == NULL ? 2 : 3;
+                uint32_t offset = sizeof(struct SuperBlob) + count * sizeof(struct BlobIndex);
 
-            super->index[0].type = Swap(CSSLOT_CODEDIRECTORY);
-            super->index[0].offset = Swap(offset);
-
-            uint32_t begin = offset;
-            struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
-            offset += sizeof(struct CodeDirectory);
-
-            directory->blob.magic = Swap(CSMAGIC_CODEDIRECTORY);
-            directory->version = Swap(uint32_t(0x00020001));
-            directory->flags = Swap(uint32_t(0));
-            directory->codeLimit = Swap(data);
-            directory->hashSize = 0x14;
-            directory->hashType = 0x01;
-            directory->spare1 = 0x00;
-            directory->pageSize = 0x0c;
-            directory->spare2 = Swap(uint32_t(0));
-
-            directory->identOffset = Swap(offset - begin);
-            strcpy(reinterpret_cast<char *>(blob + offset), base);
-            offset += strlen(base) + 1;
-
-            uint32_t special = xmld == NULL ? CSSLOT_REQUIREMENTS : CSSLOT_ENTITLEMENTS;
-            directory->nSpecialSlots = Swap(special);
-
-            uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + offset);
-            memset(hashes, 0, sizeof(*hashes) * special);
-
-            offset += sizeof(*hashes) * special;
-            hashes += special;
-
-            uint32_t pages = (data + 0x1000 - 1) / 0x1000;
-            directory->nCodeSlots = Swap(pages);
-
-            if (pages != 1)
-                for (size_t i = 0; i != pages - 1; ++i)
-                    sha1(hashes[i], top + 0x1000 * i, 0x1000);
-            if (pages != 0)
-                sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
-
-            directory->hashOffset = Swap(offset - begin);
-            offset += sizeof(*hashes) * pages;
-            directory->blob.length = Swap(offset - begin);
-
-            super->index[1].type = Swap(CSSLOT_REQUIREMENTS);
-            super->index[1].offset = Swap(offset);
-
-            memcpy(blob + offset, "\xfa\xde\x0c\x01\x00\x00\x00\x0c\x00\x00\x00\x00", 0xc);
-            offset += 0xc;
-
-            if (xmld != NULL) {
-                super->index[2].type = Swap(CSSLOT_ENTITLEMENTS);
-                super->index[2].offset = Swap(offset);
+                super->index[0].type = Swap(CSSLOT_CODEDIRECTORY);
+                super->index[0].offset = Swap(offset);
 
                 uint32_t begin = offset;
-                struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
-                offset += sizeof(struct Blob);
+                struct CodeDirectory *directory = reinterpret_cast<struct CodeDirectory *>(blob + begin);
+                offset += sizeof(struct CodeDirectory);
 
-                memcpy(blob + offset, xmld, xmls);
-                offset += xmls;
+                directory->blob.magic = Swap(CSMAGIC_CODEDIRECTORY);
+                directory->version = Swap(uint32_t(0x00020001));
+                directory->flags = Swap(uint32_t(0));
+                directory->codeLimit = Swap(data);
+                directory->hashSize = 0x14;
+                directory->hashType = 0x01;
+                directory->spare1 = 0x00;
+                directory->pageSize = 0x0c;
+                directory->spare2 = Swap(uint32_t(0));
 
-                entitlements->magic = Swap(CSMAGIC_ENTITLEMENTS);
-                entitlements->length = Swap(offset - begin);
-            }
+                directory->identOffset = Swap(offset - begin);
+                strcpy(reinterpret_cast<char *>(blob + offset), base);
+                offset += strlen(base) + 1;
 
-            for (size_t index(0); index != count; ++index) {
-                uint32_t type = Swap(super->index[index].type);
-                if (type != 0 && type <= special) {
-                    uint32_t offset = Swap(super->index[index].offset);
-                    struct Blob *local = (struct Blob *) (blob + offset);
-                    sha1((uint8_t *) (hashes - type), (uint8_t *) local, Swap(local->length));
+                uint32_t special = xmld == NULL ? CSSLOT_REQUIREMENTS : CSSLOT_ENTITLEMENTS;
+                directory->nSpecialSlots = Swap(special);
+
+                uint8_t (*hashes)[20] = reinterpret_cast<uint8_t (*)[20]>(blob + offset);
+                memset(hashes, 0, sizeof(*hashes) * special);
+
+                offset += sizeof(*hashes) * special;
+                hashes += special;
+
+                uint32_t pages = (data + 0x1000 - 1) / 0x1000;
+                directory->nCodeSlots = Swap(pages);
+
+                if (pages != 1)
+                    for (size_t i = 0; i != pages - 1; ++i)
+                        sha1(hashes[i], top + 0x1000 * i, 0x1000);
+                if (pages != 0)
+                    sha1(hashes[pages - 1], top + 0x1000 * (pages - 1), ((data - 1) % 0x1000) + 1);
+
+                directory->hashOffset = Swap(offset - begin);
+                offset += sizeof(*hashes) * pages;
+                directory->blob.length = Swap(offset - begin);
+
+                super->index[1].type = Swap(CSSLOT_REQUIREMENTS);
+                super->index[1].offset = Swap(offset);
+
+                memcpy(blob + offset, "\xfa\xde\x0c\x01\x00\x00\x00\x0c\x00\x00\x00\x00", 0xc);
+                offset += 0xc;
+
+                if (xmld != NULL) {
+                    super->index[2].type = Swap(CSSLOT_ENTITLEMENTS);
+                    super->index[2].offset = Swap(offset);
+
+                    uint32_t begin = offset;
+                    struct Blob *entitlements = reinterpret_cast<struct Blob *>(blob + begin);
+                    offset += sizeof(struct Blob);
+
+                    memcpy(blob + offset, xmld, xmls);
+                    offset += xmls;
+
+                    entitlements->magic = Swap(CSMAGIC_ENTITLEMENTS);
+                    entitlements->length = Swap(offset - begin);
                 }
+
+                for (size_t index(0); index != count; ++index) {
+                    uint32_t type = Swap(super->index[index].type);
+                    if (type != 0 && type <= special) {
+                        uint32_t offset = Swap(super->index[index].offset);
+                        struct Blob *local = (struct Blob *) (blob + offset);
+                        sha1((uint8_t *) (hashes - type), (uint8_t *) local, Swap(local->length));
+                    }
+                }
+
+                super->count = Swap(count);
+                super->blob.length = Swap(offset);
+
+                if (offset > size) {
+                    fprintf(stderr, "offset (%u) > size (%u)\n", offset, size);
+                    _assert(false);
+                } //else fprintf(stderr, "offset (%zu) <= size (%zu)\n", offset, size);
+
+                memset(blob + offset, 0, size - offset);
             }
-
-            super->count = Swap(count);
-            super->blob.length = Swap(offset);
-
-            if (offset > size) {
-                fprintf(stderr, "offset (%u) > size (%u)\n", offset, size);
-                _assert(false);
-            } //else fprintf(stderr, "offset (%zu) <= size (%zu)\n", offset, size);
-
-            memset(blob + offset, 0, size - offset);
         }
 
         if (flag_S) {
-            uint8_t *top = reinterpret_cast<uint8_t *>(framework.GetBase());
-            size_t size = framework.GetSize();
+            uint8_t *top = reinterpret_cast<uint8_t *>(fat_header.GetBase());
+            size_t size = fat_header.GetSize();
 
             char *copy;
             asprintf(&copy, "%s.%s.cp", dir, base);
@@ -859,7 +939,7 @@ int main(int argc, const char *argv[]) {
             temp = copy;
         }
 
-        if (temp) {
+        if (temp != NULL) {
             struct stat info;
             _syscall(stat(path, &info));
             _syscall(chown(temp, info.st_uid, info.st_gid));
