@@ -513,6 +513,10 @@ class FatHeader :
     bool IsFat() const {
         return fat_header_ != NULL;
     }
+
+    struct fat_header *operator ->() const {
+        return fat_header_;
+    }
 };
 
 FatHeader Map(const char *path) {
