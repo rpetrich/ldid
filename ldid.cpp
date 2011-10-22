@@ -93,15 +93,19 @@ struct load_command {
     uint32_t cmdsize;
 } _packed;
 
-#define LC_REQ_DYLD  uint32_t(0x80000000)
+#define LC_REQ_DYLD           uint32_t(0x80000000)
 
-#define	LC_SEGMENT         uint32_t(0x01)
-#define	LC_SYMTAB          uint32_t(0x02)
-#define LC_LOAD_DYLIB      uint32_t(0x0c)
-#define LC_ID_DYLIB        uint32_t(0x0d)
-#define LC_UUID            uint32_t(0x1b)
-#define LC_CODE_SIGNATURE  uint32_t(0x1d)
-#define LC_REEXPORT_DYLIB  uint32_t(0x1f | LC_REQ_DYLD)
+#define LC_SEGMENT            uint32_t(0x01)
+#define LC_SYMTAB             uint32_t(0x02)
+#define LC_DYSYMTAB           uint32_t(0x0b)
+#define LC_LOAD_DYLIB         uint32_t(0x0c)
+#define LC_ID_DYLIB           uint32_t(0x0d)
+#define LC_UUID               uint32_t(0x1b)
+#define LC_CODE_SIGNATURE     uint32_t(0x1d)
+#define LC_SEGMENT_SPLIT_INFO uint32_t(0x1e)
+#define LC_REEXPORT_DYLIB     uint32_t(0x1f | LC_REQ_DYLD)
+#define LC_DYLD_INFO          uint32_t(0x22)
+#define LC_DYLD_INFO_ONLY     uint32_t(0x22 | LC_REQ_DYLD)
 
 struct dylib {
     uint32_t name;
@@ -129,6 +133,91 @@ struct symtab_command {
     uint32_t nsyms;
     uint32_t stroff;
     uint32_t strsize;
+} _packed;
+
+struct dyld_info_command {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t rebase_off;
+    uint32_t rebase_size;
+    uint32_t bind_off;
+    uint32_t bind_size;
+    uint32_t weak_bind_off;
+    uint32_t weak_bind_size;
+    uint32_t lazy_bind_off;
+    uint32_t lazy_bind_size;
+    uint32_t export_off;
+    uint32_t export_size;
+} _packed;
+
+struct dysymtab_command {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t ilocalsym;
+    uint32_t nlocalsym;
+    uint32_t iextdefsym;
+    uint32_t nextdefsym;
+    uint32_t iundefsym;
+    uint32_t nundefsym;
+    uint32_t tocoff;
+    uint32_t ntoc;
+    uint32_t modtaboff;
+    uint32_t nmodtab;
+    uint32_t extrefsymoff;
+    uint32_t nextrefsyms;
+    uint32_t indirectsymoff;
+    uint32_t nindirectsyms;
+    uint32_t extreloff;
+    uint32_t nextrel;
+    uint32_t locreloff;
+    uint32_t nlocrel;
+} _packed;
+
+struct dylib_table_of_contents {
+    uint32_t symbol_index;
+    uint32_t module_index;
+} _packed;
+
+struct dylib_module {
+    uint32_t module_name;
+    uint32_t iextdefsym;
+    uint32_t nextdefsym;
+    uint32_t irefsym;
+    uint32_t nrefsym;
+    uint32_t ilocalsym;
+    uint32_t nlocalsym;
+    uint32_t iextrel;
+    uint32_t nextrel;
+    uint32_t iinit_iterm;
+    uint32_t ninit_nterm;
+    uint32_t objc_module_info_addr;
+    uint32_t objc_module_info_size;
+} _packed;
+
+struct dylib_reference {
+    uint32_t isym:24;
+    uint32_t flags:8;
+} _packed;
+
+struct relocation_info {
+    int32_t r_address;
+    uint32_t r_symbolnum:24;
+    uint32_t r_pcrel:1;
+    uint32_t r_length:2;
+    uint32_t r_extern:1;
+    uint32_t r_type:4;
+} _packed;
+
+struct nlist {
+    union {
+        char *n_name;
+        int32_t n_strx;
+    } n_un;
+
+    uint8_t n_type;
+    uint8_t n_sect;
+    uint8_t n_desc;
+    uint32_t n_value;
 } _packed;
 
 struct segment_command {
