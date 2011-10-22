@@ -100,6 +100,7 @@ struct load_command {
 #define LC_DYSYMTAB           uint32_t(0x0b)
 #define LC_LOAD_DYLIB         uint32_t(0x0c)
 #define LC_ID_DYLIB           uint32_t(0x0d)
+#define LC_SEGMENT_64         uint32_t(0x19)
 #define LC_UUID               uint32_t(0x1b)
 #define LC_CODE_SIGNATURE     uint32_t(0x1d)
 #define LC_SEGMENT_SPLIT_INFO uint32_t(0x1e)
@@ -234,11 +235,39 @@ struct segment_command {
     uint32_t flags;
 };
 
+struct segment_command_64 {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    char segname[16];
+    uint64_t vmaddr;
+    uint64_t vmsize;
+    uint64_t fileoff;
+    uint64_t filesize;
+    uint32_t maxprot;
+    uint32_t initprot;
+    uint32_t nsects;
+    uint32_t flags;
+};
+
 struct section {
     char sectname[16];
     char segname[16];
     uint32_t addr;
     uint32_t size;
+    uint32_t offset;
+    uint32_t align;
+    uint32_t reloff;
+    uint32_t nreloc;
+    uint32_t flags;
+    uint32_t reserved1;
+    uint32_t reserved2;
+};
+
+struct section_64 {
+    char sectname[16];
+    char segname[16];
+    uint64_t addr;
+    uint64_t size;
     uint32_t offset;
     uint32_t align;
     uint32_t reloff;
@@ -410,12 +439,27 @@ class MachHeader :
     std::vector<segment_command *> GetSegments(const char *segment_name) {
         std::vector<struct segment_command *> segment_commands;
 
-        _foreach (load_command, GetLoadCommands())
+        _foreach (load_command, GetLoadCommands()) {
             if (Swap(load_command->cmd) == LC_SEGMENT) {
                 segment_command *segment_command = reinterpret_cast<struct segment_command *>(load_command);
                 if (strncmp(segment_command->segname, segment_name, 16) == 0)
                     segment_commands.push_back(segment_command);
             }
+        }
+
+        return segment_commands;
+    }
+
+    std::vector<segment_command_64 *> GetSegments64(const char *segment_name) {
+        std::vector<struct segment_command_64 *> segment_commands;
+
+        _foreach (load_command, GetLoadCommands()) {
+            if (Swap(load_command->cmd) == LC_SEGMENT_64) {
+                segment_command_64 *segment_command = reinterpret_cast<struct segment_command_64 *>(load_command);
+                if (strncmp(segment_command->segname, segment_name, 16) == 0)
+                    segment_commands.push_back(segment_command);
+            }
+        }
 
         return segment_commands;
     }
@@ -474,12 +518,30 @@ class MachHeader :
     }
 };
 
+class FatMachHeader :
+    public MachHeader
+{
+  private:
+    fat_arch *fat_arch_;
+
+  public:
+    FatMachHeader(void *base, size_t size, fat_arch *fat_arch) :
+        MachHeader(base, size),
+        fat_arch_(fat_arch)
+    {
+    }
+
+    fat_arch *GetFatArch() const {
+        return fat_arch_;
+    }
+};
+
 class FatHeader :
     public Data
 {
   private:
     fat_header *fat_header_;
-    std::vector<MachHeader> mach_headers_;
+    std::vector<FatMachHeader> mach_headers_;
 
   public:
     FatHeader(void *base, size_t size) :
@@ -492,7 +554,7 @@ class FatHeader :
             goto fat;
         } else if (Swap(fat_header_->magic) != FAT_MAGIC) {
             fat_header_ = NULL;
-            mach_headers_.push_back(MachHeader(base, size));
+            mach_headers_.push_back(FatMachHeader(base, size, NULL));
         } else fat: {
             size_t fat_narch = Swap(fat_header_->nfat_arch);
             fat_arch *fat_arch = reinterpret_cast<struct fat_arch *>(fat_header_ + 1);
@@ -500,13 +562,13 @@ class FatHeader :
             for (arch = 0; arch != fat_narch; ++arch) {
                 uint32_t arch_offset = Swap(fat_arch->offset);
                 uint32_t arch_size = Swap(fat_arch->size);
-                mach_headers_.push_back(MachHeader((uint8_t *) base + arch_offset, size));
+                mach_headers_.push_back(FatMachHeader((uint8_t *) base + arch_offset, arch_size, fat_arch));
                 ++fat_arch;
             }
         }
     }
 
-    std::vector<MachHeader> &GetMachHeaders() {
+    std::vector<FatMachHeader> &GetMachHeaders() {
         return mach_headers_;
     }
 
@@ -731,43 +793,57 @@ int main(int argc, const char *argv[]) {
         }
 
         if (flag_r) {
-            size_t clip(_not(size_t)); {
+            uint32_t clip(0); {
                 FatHeader fat_header(Map(path));
                 _foreach (mach_header, fat_header.GetMachHeaders()) {
                     mach_header->flags = mach_header.Swap(mach_header.Swap(mach_header->flags) | MH_DYLDLINK);
 
-                    size_t size(_not(size_t)); {
+                    uint32_t size(_not(uint32_t)); {
                         _foreach (load_command, mach_header.GetLoadCommands()) {
                             switch (mach_header.Swap(load_command->cmd)) {
                                 case LC_CODE_SIGNATURE: {
                                     struct linkedit_data_command *signature = reinterpret_cast<struct linkedit_data_command *>(load_command);
+                                    memset(reinterpret_cast<uint8_t *>(mach_header.GetBase()) + mach_header.Swap(signature->dataoff), 0, mach_header.Swap(signature->datasize));
                                     memset(signature, 0, sizeof(struct linkedit_data_command));
 
-                                    mach_header->ncmds -= 1;
-                                    mach_header->sizeofcmds -= sizeof(struct linkedit_data_command);
+                                    mach_header->ncmds = mach_header.Swap(mach_header.Swap(mach_header->ncmds) - 1);
+                                    mach_header->sizeofcmds = mach_header.Swap(uint32_t(mach_header.Swap(mach_header->sizeofcmds) - sizeof(struct linkedit_data_command)));
                                 } break;
 
                                 case LC_SYMTAB: {
                                     struct symtab_command *symtab = reinterpret_cast<struct symtab_command *>(load_command);
-                                    size = symtab->stroff + symtab->strsize;
+                                    size = mach_header.Swap(symtab->stroff) + mach_header.Swap(symtab->strsize);
                                 } break;
                             }
                         }
+                    }
 
-                        _foreach (segment, const_cast<MachHeader &>(mach_header).GetSegments("__LINKEDIT")) {
-                            segment->filesize -= mach_header.GetSize() - size;
+                    _assert(size != _not(uint32_t));
 
-                            if (!fat_header.IsFat())
-                                clip = size;
-                            else
-                                _assert(false);
-                        }
+                    _foreach (segment, const_cast<FatMachHeader &>(mach_header).GetSegments("__LINKEDIT")) {
+                        segment->filesize -= mach_header.GetSize() - size;
+
+                        if (fat_arch *fat_arch = mach_header.GetFatArch()) {
+                            fat_arch->size = fat_header.Swap(size);
+                            clip = std::max(clip, fat_header.Swap(fat_arch->offset) + size);
+                        } else
+                            clip = std::max(clip, size);
+                    }
+
+                    _foreach (segment, const_cast<FatMachHeader &>(mach_header).GetSegments64("__LINKEDIT")) {
+                        segment->filesize -= mach_header.GetSize() - size;
+
+                        if (fat_arch *fat_arch = mach_header.GetFatArch()) {
+                            fat_arch->size = fat_header.Swap(size);
+                            clip = std::max(clip, fat_header.Swap(fat_arch->offset) + size);
+                        } else
+                            clip = std::max(clip, size);
                     }
                 }
             }
 
-            if (clip != _not(size_t))
-                _syscall(truncate(path, clip));
+            _assert(clip != 0);
+            _syscall(truncate(path, clip));
         }
 
         if (flag_S) {
