@@ -519,9 +519,9 @@ class FatHeader :
     }
 };
 
-FatHeader Map(const char *path) {
+FatHeader Map(const char *path, bool ro = false) {
     size_t size;
-    void *base(map(path, 0, _not(size_t), &size, false));
+    void *base(map(path, 0, _not(size_t), &size, ro));
     return FatHeader(base, size);
 }
 
@@ -877,7 +877,7 @@ int main(int argc, const char *argv[]) {
         if (flag_p)
             printf("path%zu='%s'\n", filei, file.c_str());
 
-        FatHeader fat_header(Map(temp == NULL ? path : temp));
+        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S)));
         struct linkedit_data_command *signature(NULL);
 
         _foreach (mach_header, fat_header.GetMachHeaders()) {
