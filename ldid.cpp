@@ -96,6 +96,7 @@ struct load_command {
 #define LC_REQ_DYLD  uint32_t(0x80000000)
 
 #define	LC_SEGMENT         uint32_t(0x01)
+#define	LC_SYMTAB          uint32_t(0x02)
 #define LC_LOAD_DYLIB      uint32_t(0x0c)
 #define LC_ID_DYLIB        uint32_t(0x0d)
 #define LC_UUID            uint32_t(0x1b)
@@ -119,6 +120,15 @@ struct uuid_command {
     uint32_t cmd;
     uint32_t cmdsize;
     uint8_t uuid[16];
+} _packed;
+
+struct symtab_command {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t symoff;
+    uint32_t nsyms;
+    uint32_t stroff;
+    uint32_t strsize;
 } _packed;
 
 struct segment_command {
@@ -410,6 +420,10 @@ class FatHeader :
     std::vector<MachHeader> &GetMachHeaders() {
         return mach_headers_;
     }
+
+    bool IsFat() const {
+        return fat_header_ != NULL;
+    }
 };
 
 FatHeader Map(const char *path) {
@@ -521,6 +535,8 @@ int main(int argc, const char *argv[]) {
     little_ = endian.byte[0];
 
     bool flag_R(false);
+    bool flag_r(false);
+
     bool flag_t(false);
     bool flag_p(false);
     bool flag_u(false);
@@ -555,6 +571,8 @@ int main(int argc, const char *argv[]) {
             files.push_back(argv[argi]);
         else switch (argv[argi][1]) {
             case 'R': flag_R = true; break;
+            case 'r': flag_r = true; break;
+
             case 't': flag_t = true; break;
             case 'u': flag_u = true; break;
             case 'p': flag_p = true; break;
@@ -617,6 +635,46 @@ int main(int argc, const char *argv[]) {
         else {
             dir = strdup("");
             base = path;
+        }
+
+        if (flag_r) {
+            size_t clip(_not(size_t)); {
+                FatHeader fat_header(Map(path));
+                _foreach (mach_header, fat_header.GetMachHeaders()) {
+                    mach_header->flags = mach_header.Swap(mach_header.Swap(mach_header->flags) | MH_DYLDLINK);
+
+                    size_t size(_not(size_t)); {
+                        _foreach (load_command, mach_header.GetLoadCommands()) {
+                            switch (mach_header.Swap(load_command->cmd)) {
+                                case LC_CODE_SIGNATURE: {
+                                    struct linkedit_data_command *signature = reinterpret_cast<struct linkedit_data_command *>(load_command);
+                                    memset(signature, 0, sizeof(struct linkedit_data_command));
+
+                                    mach_header->ncmds -= 1;
+                                    mach_header->sizeofcmds -= sizeof(struct linkedit_data_command);
+                                } break;
+
+                                case LC_SYMTAB: {
+                                    struct symtab_command *symtab = reinterpret_cast<struct symtab_command *>(load_command);
+                                    size = symtab->stroff + symtab->strsize;
+                                } break;
+                            }
+                        }
+
+                        _foreach (segment, const_cast<MachHeader &>(mach_header).GetSegments("__LINKEDIT")) {
+                            segment->filesize -= mach_header.GetSize() - size;
+
+                            if (!fat_header.IsFat())
+                                clip = size;
+                            else
+                                _assert(false);
+                        }
+                    }
+                }
+            }
+
+            if (clip != _not(size_t))
+                _syscall(truncate(path, clip));
         }
 
         if (flag_S) {
