@@ -419,7 +419,7 @@ class MachHeader :
         return load_commands;
     }
 
-    std::vector<segment_command *> GetSegments(const char *segment_name) {
+    std::vector<segment_command *> GetSegments(const char *segment_name) const {
         std::vector<struct segment_command *> segment_commands;
 
         _foreach (load_command, GetLoadCommands()) {
@@ -447,7 +447,7 @@ class MachHeader :
         return segment_commands;
     }
 
-    std::vector<section *> GetSections(const char *segment_name, const char *section_name) {
+    std::vector<section *> GetSections(const char *segment_name, const char *section_name) const {
         std::vector<section *> sections;
 
         _foreach (segment, GetSegments(segment_name)) {
@@ -907,7 +907,7 @@ int main(int argc, const char *argv[]) {
                     alloc /= 16;
                     alloc *= 16;
 
-                    asprintf(&arg, "%u", alloc);
+                    asprintf(&arg, "%zu", alloc);
                     args.push_back(arg);
                 }
 
@@ -994,7 +994,6 @@ int main(int argc, const char *argv[]) {
                 _assert(signature != NULL);
 
                 uint32_t data = mach_header.Swap(signature->dataoff);
-                uint32_t size = mach_header.Swap(signature->datasize);
 
                 uint8_t *top = reinterpret_cast<uint8_t *>(mach_header.GetBase());
                 uint8_t *blob = top + data;
@@ -1012,7 +1011,6 @@ int main(int argc, const char *argv[]) {
                 _assert(signature != NULL);
 
                 uint32_t data = mach_header.Swap(signature->dataoff);
-                uint32_t size = mach_header.Swap(signature->datasize);
 
                 uint8_t *top = reinterpret_cast<uint8_t *>(mach_header.GetBase());
                 uint8_t *blob = top + data;
