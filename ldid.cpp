@@ -699,6 +699,9 @@ int main(int argc, const char *argv[]) {
     bool flag_D(false);
     bool flag_d(false);
 
+    bool flag_A(false);
+    bool flag_a(false);
+
     uint32_t flag_CPUType(_not(uint32_t));
     uint32_t flag_CPUSubtype(_not(uint32_t));
 
@@ -736,6 +739,22 @@ int main(int argc, const char *argv[]) {
 
             case 'D': flag_D = true; break;
             case 'd': flag_d = true; break;
+
+            case 'a': flag_a = true; break;
+
+            case 'A':
+                flag_A = true;
+                if (argv[argi][2] != '\0') {
+                    const char *cpu = argv[argi] + 2;
+                    const char *colon = strchr(cpu, ':');
+                    _assert(colon != NULL);
+                    char *arge;
+                    flag_CPUType = strtoul(cpu, &arge, 0);
+                    _assert(arge == colon);
+                    flag_CPUSubtype = strtoul(colon + 1, &arge, 0);
+                    _assert(arge == argv[argi] + strlen(argv[argi]));
+                }
+            break;
 
             case 's':
                 _assert(!flag_S);
@@ -961,6 +980,16 @@ int main(int argc, const char *argv[]) {
         struct linkedit_data_command *signature(NULL);
 
         _foreach (mach_header, fat_header.GetMachHeaders()) {
+            if (flag_A) {
+                if (mach_header.GetCPUType() != flag_CPUType)
+                    continue;
+                if (mach_header.GetCPUSubtype() != flag_CPUSubtype)
+                    continue;
+            }
+
+            if (flag_a)
+                printf("cpu=0x%x:0x%x\n", mach_header.GetCPUType(), mach_header.GetCPUSubtype());
+
             if (flag_d) {
                 if (struct fat_arch *fat_arch = mach_header.GetFatArch())
                     printf("offset=0x%x\n", Swap(fat_arch->offset));
