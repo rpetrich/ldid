@@ -88,6 +88,7 @@ struct load_command {
 #define LC_CODE_SIGNATURE     uint32_t(0x1d)
 #define LC_SEGMENT_SPLIT_INFO uint32_t(0x1e)
 #define LC_REEXPORT_DYLIB     uint32_t(0x1f | LC_REQ_DYLD)
+#define LC_ENCRYPTION_INFO    uint32_t(0x21)
 #define LC_DYLD_INFO          uint32_t(0x22)
 #define LC_DYLD_INFO_ONLY     uint32_t(0x22 | LC_REQ_DYLD)
 
@@ -265,6 +266,14 @@ struct linkedit_data_command {
     uint32_t cmdsize;
     uint32_t dataoff;
     uint32_t datasize;
+} _packed;
+
+struct encryption_info_command {
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t cryptoff;
+    uint32_t cryptsize;
+    uint32_t cryptid;
 } _packed;
 
 uint16_t Swap_(uint16_t value) {
@@ -687,6 +696,12 @@ int main(int argc, const char *argv[]) {
 
     bool flag_O(false);
 
+    bool flag_D(false);
+    bool flag_d(false);
+
+    uint32_t flag_CPUType(_not(uint32_t));
+    uint32_t flag_CPUSubtype(_not(uint32_t));
+
     bool timeh(false);
     uint32_t timev(0);
 
@@ -718,6 +733,9 @@ int main(int argc, const char *argv[]) {
             case 'p': flag_p = true; break;
             case 'e': flag_e = true; break;
             case 'O': flag_O = true; break;
+
+            case 'D': flag_D = true; break;
+            case 'd': flag_d = true; break;
 
             case 's':
                 _assert(!flag_S);
@@ -939,10 +957,17 @@ int main(int argc, const char *argv[]) {
         if (flag_p)
             printf("path%zu='%s'\n", filei, file.c_str());
 
-        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S | flag_O)));
+        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S | flag_O | flag_D)));
         struct linkedit_data_command *signature(NULL);
 
         _foreach (mach_header, fat_header.GetMachHeaders()) {
+            if (flag_d) {
+                if (struct fat_arch *fat_arch = mach_header.GetFatArch())
+                    printf("offset=0x%x\n", Swap(fat_arch->offset));
+                else
+                    printf("offset=0x0\n");
+            }
+
             if (woffset != _not(uintptr_t)) {
                 Pointer<uint32_t> wvalue(mach_header.GetPointer<uint32_t>(woffset));
                 if (wvalue == NULL)
@@ -953,6 +978,12 @@ int main(int argc, const char *argv[]) {
 
             if (noffset != _not(uintptr_t))
                 printf("%s\n", &*mach_header.GetPointer<char>(noffset));
+
+            if (flag_d)
+                _foreach(segment, mach_header.GetSegments("__TEXT")) {
+                    printf("vmaddr=0x%x\n", mach_header.Swap(segment->vmaddr));
+                    printf("fileoff=0x%x\n", mach_header.Swap(segment->fileoff));
+                }
 
             if (flag_O) {
                 _foreach(section, mach_header.GetSections("__TEXT", "__text"))
@@ -994,6 +1025,16 @@ int main(int argc, const char *argv[]) {
                         }
 
                         dylib_command->dylib.timestamp = mach_header.Swap(timed);
+                    }
+                } else if (cmd == LC_ENCRYPTION_INFO) {
+                    volatile struct encryption_info_command *encryption_info_command(reinterpret_cast<struct encryption_info_command *>(load_command));
+
+                    if (flag_D)
+                        encryption_info_command->cryptid = mach_header.Swap(0);
+
+                    if (flag_d) {
+                        printf("cryptoff=0x%x\n", mach_header.Swap(encryption_info_command->cryptoff));
+                        printf("cryptsize=0x%x\n", mach_header.Swap(encryption_info_command->cryptsize));
                     }
                 }
             }
