@@ -216,7 +216,7 @@ struct segment_command {
     uint32_t initprot;
     uint32_t nsects;
     uint32_t flags;
-};
+} _packed;
 
 struct segment_command_64 {
     uint32_t cmd;
@@ -230,7 +230,7 @@ struct segment_command_64 {
     uint32_t initprot;
     uint32_t nsects;
     uint32_t flags;
-};
+} _packed;
 
 struct section {
     char sectname[16];
@@ -244,7 +244,7 @@ struct section {
     uint32_t flags;
     uint32_t reserved1;
     uint32_t reserved2;
-};
+} _packed;
 
 struct section_64 {
     char sectname[16];
@@ -258,7 +258,7 @@ struct section_64 {
     uint32_t flags;
     uint32_t reserved1;
     uint32_t reserved2;
-};
+} _packed;
 
 struct linkedit_data_command {
     uint32_t cmd;
