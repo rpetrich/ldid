@@ -685,6 +685,8 @@ int main(int argc, const char *argv[]) {
     bool flag_S(false);
     bool flag_s(false);
 
+    bool flag_O(false);
+
     bool timeh(false);
     uint32_t timev(0);
 
@@ -715,6 +717,7 @@ int main(int argc, const char *argv[]) {
             case 'u': flag_u = true; break;
             case 'p': flag_p = true; break;
             case 'e': flag_e = true; break;
+            case 'O': flag_O = true; break;
 
             case 's':
                 _assert(!flag_S);
@@ -936,7 +939,7 @@ int main(int argc, const char *argv[]) {
         if (flag_p)
             printf("path%zu='%s'\n", filei, file.c_str());
 
-        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S)));
+        FatHeader fat_header(Map(temp == NULL ? path : temp, !(flag_R | flag_T | flag_s | flag_S | flag_O)));
         struct linkedit_data_command *signature(NULL);
 
         _foreach (mach_header, fat_header.GetMachHeaders()) {
@@ -950,6 +953,11 @@ int main(int argc, const char *argv[]) {
 
             if (noffset != _not(uintptr_t))
                 printf("%s\n", &*mach_header.GetPointer<char>(noffset));
+
+            if (flag_O) {
+                _foreach(section, mach_header.GetSections("__TEXT", "__text"))
+                    section->addr = mach_header.Swap(0);
+            }
 
             _foreach (load_command, mach_header.GetLoadCommands()) {
                 uint32_t cmd(mach_header.Swap(load_command->cmd));
