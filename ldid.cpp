@@ -819,6 +819,13 @@ int main(int argc, const char *argv[]) {
             uint32_t clip(0); {
                 FatHeader fat_header(Map(path));
                 _foreach (mach_header, fat_header.GetMachHeaders()) {
+                    if (flag_A) {
+                        if (mach_header.GetCPUType() != flag_CPUType)
+                            continue;
+                        if (mach_header.GetCPUSubtype() != flag_CPUSubtype)
+                            continue;
+                    }
+
                     mach_header->flags = mach_header.Swap(mach_header.Swap(mach_header->flags) | MH_DYLDLINK);
 
                     uint32_t size(_not(uint32_t)); {
@@ -865,8 +872,8 @@ int main(int argc, const char *argv[]) {
                 }
             }
 
-            _assert(clip != 0);
-            _syscall(truncate(path, clip));
+            if (clip != 0)
+                _syscall(truncate(path, clip));
         }
 
         if (flag_S) {
@@ -878,6 +885,13 @@ int main(int argc, const char *argv[]) {
             std::vector<CodesignAllocation> allocations; {
                 FatHeader fat_header(Map(path));
                 _foreach (mach_header, fat_header.GetMachHeaders()) {
+                    if (flag_A) {
+                        if (mach_header.GetCPUType() != flag_CPUType)
+                            continue;
+                        if (mach_header.GetCPUSubtype() != flag_CPUSubtype)
+                            continue;
+                    }
+
                     mach_header->flags = mach_header.Swap(mach_header.Swap(mach_header->flags) | MH_DYLDLINK);
 
                     size_t size(_not(size_t)); {
@@ -898,6 +912,8 @@ int main(int argc, const char *argv[]) {
                     allocations.push_back(CodesignAllocation(mach_header.GetCPUType(), mach_header.GetCPUSubtype(), size));
                 }
             }
+
+            if (!allocations.empty()) {
 
             pid_t pid = fork();
             _syscall(pid);
@@ -971,6 +987,8 @@ int main(int argc, const char *argv[]) {
             _syscall(waitpid(pid, &status, 0));
             _assert(WIFEXITED(status));
             _assert(WEXITSTATUS(status) == 0);
+
+            }
         }
 
         if (flag_p)
