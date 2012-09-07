@@ -1064,6 +1064,7 @@ int main(int argc, const char *argv[]) {
                     if (flag_d) {
                         printf("cryptoff=0x%x\n", mach_header.Swap(encryption_info_command->cryptoff));
                         printf("cryptsize=0x%x\n", mach_header.Swap(encryption_info_command->cryptsize));
+                        printf("cryptid=0x%x\n", mach_header.Swap(encryption_info_command->cryptid));
                     }
                 }
             }
