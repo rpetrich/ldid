@@ -622,8 +622,10 @@ int main(int argc, const char *argv[]) {
         if (flag_S) {
             asprintf(&temp, "%s.%s.cs", dir, base);
             const char *allocate = getenv("CODESIGN_ALLOCATE");
-            if (allocate == NULL)
+            if (allocate == NULL) {
                 allocate = "codesign_allocate";
+                fprintf(stderr, "Warning: CODESIGN_ALLOCATE environment variable not defined, defaults to \"%s\"...\n", allocate);
+            }
 
             std::vector<CodesignAllocation> allocations; {
                 FatHeader fat_header(Map(path));
